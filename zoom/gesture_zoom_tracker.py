@@ -1,134 +1,184 @@
-"""
-gesture_zoom_tracker.py
------------------------
-역할: 엄지(landmark 4) ↔ 검지(landmark 8) 핀치 거리를 측정하여
-      zoom_delta를 반환한다.
-
-반환값 형식:
-    {
-        "index_tip": (x, y),       # 검지 끝 화면 좌표 (픽셀)
-        "pinch_distance": 83.2,    # 현재 프레임 핀치 거리 (픽셀)
-        "zoom_delta": +0.03        # 직전 프레임 대비 확대/축소 변화량
-    }
-
-Role 3(UI)에서 zoom_delta를 누적해 배율에 반영하면 됨.
-"""
-
 import math
-import mediapipe as mp
+
 import cv2
+import mediapipe as mp
 
 
-# ── 상수 ──────────────────────────────────────────────────────────────
-THUMB_TIP  = 4   # 엄지 끝 랜드마크 인덱스
-INDEX_TIP  = 8   # 검지 끝 랜드마크 인덱스
+THUMB_TIP = 4
+INDEX_TIP = 8
 
-# zoom_delta 감도 조절: 픽셀 거리 변화 1px → delta 몇 배로 변환할지
+# Distance change of 1px becomes this much zoom delta.
 SENSITIVITY = 0.005
 
-# 노이즈 억제: 거리 변화가 이 픽셀 이하면 delta = 0 으로 처리
+# Ignore tiny finger jitter.
 DEAD_ZONE_PX = 4.0
+
+# Stroke-style pinch thresholds.
+# - Start near and spread fingers to zoom in.
+# - Start far and pinch fingers together to zoom out.
+# Returning to the start position after a stroke is ignored, so zoom stays fixed.
+PINCH_START_PX = 55.0
+PINCH_END_PX = 130.0
+
+MODE_IDLE = "idle"
+MODE_ZOOM_IN = "zoom_in"
+MODE_ZOOM_OUT = "zoom_out"
+MODE_REARM_CLOSE = "rearm_close"
+MODE_REARM_OPEN = "rearm_open"
 
 
 class GestureZoomTracker:
-    """
-    MediaPipe Hands를 사용해 핀치 제스처를 추적하고
-    zoom_delta를 계산한다.
-    """
+    # Track thumb/index pinch strokes and return an incremental zoom delta.
 
-    def __init__(self, max_hands: int = 1, detection_confidence: float = 0.7):
+    def __init__(self, max_hands: int = 2, detection_confidence: float = 0.7):
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
             max_num_hands=max_hands,
             min_detection_confidence=detection_confidence,
             min_tracking_confidence=0.6,
         )
-        self._prev_distance: float | None = None  # 직전 프레임 핀치 거리
-
-    # ── 내부 헬퍼 ─────────────────────────────────────────────────────
+        self._prev_distance: float | None = None
+        self._mode = MODE_IDLE
 
     @staticmethod
     def _euclidean(p1: tuple, p2: tuple) -> float:
-        """두 (x, y) 픽셀 좌표 사이 유클리드 거리."""
+        """Euclidean distance between two (x, y) pixel points."""
         return math.sqrt((p2[0] - p1[0]) ** 2 + (p2[1] - p1[1]) ** 2)
 
+    def _reset_stroke(self):
+        self._prev_distance = None
+        self._mode = MODE_IDLE
+
     def _calc_zoom_delta(self, current_dist: float) -> float:
-        """
-        직전 프레임과 현재 프레임의 핀치 거리 차이로 zoom_delta 산출.
-        - 양수 → 손가락 벌림 → 확대
-        - 음수 → 손가락 좁힘 → 축소
-        """
+        if self._mode == MODE_IDLE:
+            if current_dist <= PINCH_START_PX:
+                self._mode = MODE_ZOOM_IN
+                self._prev_distance = current_dist
+            elif current_dist >= PINCH_END_PX:
+                self._mode = MODE_ZOOM_OUT
+                self._prev_distance = current_dist
+            return 0.0
+
+        if self._mode == MODE_REARM_CLOSE:
+            if current_dist <= PINCH_START_PX:
+                self._mode = MODE_ZOOM_IN
+                self._prev_distance = current_dist
+            return 0.0
+
+        if self._mode == MODE_REARM_OPEN:
+            if current_dist >= PINCH_END_PX:
+                self._mode = MODE_ZOOM_OUT
+                self._prev_distance = current_dist
+            return 0.0
+
         if self._prev_distance is None:
-            # 첫 프레임은 비교 대상이 없으므로 delta = 0
             self._prev_distance = current_dist
             return 0.0
 
         diff = current_dist - self._prev_distance
         self._prev_distance = current_dist
 
-        # dead zone: 미세 떨림 무시
+        if self._mode == MODE_ZOOM_IN:
+            if diff <= 0:
+                return 0.0
+
+        if self._mode == MODE_ZOOM_OUT:
+            if diff >= 0:
+                return 0.0
+
         if abs(diff) < DEAD_ZONE_PX:
             return 0.0
 
-        return round(diff * SENSITIVITY, 4)
+        zoom_delta = round(diff * SENSITIVITY, 4)
 
-    # ── 공개 API ──────────────────────────────────────────────────────
+        if self._mode == MODE_ZOOM_IN and current_dist >= PINCH_END_PX:
+            self._mode = MODE_REARM_CLOSE
+            self._prev_distance = None
+        elif self._mode == MODE_ZOOM_OUT and current_dist <= PINCH_START_PX:
+            self._mode = MODE_REARM_OPEN
+            self._prev_distance = None
 
-    def process_frame(self, frame_bgr) -> dict | None:
-        """
-        BGR 프레임 하나를 입력받아 핀치 정보를 반환한다.
+        return zoom_delta
 
-        Parameters
-        ----------
-        frame_bgr : np.ndarray
-            cv2.VideoCapture 에서 읽은 BGR 프레임
+    def _pick_landmarks(self, hand_landmarks, w, h, ignore_point=None, ignore_radius_px=120):
+        if ignore_point is None:
+            return hand_landmarks[0].landmark
 
-        Returns
-        -------
-        dict | None
-            손이 감지된 경우 → {"index_tip", "pinch_distance", "zoom_delta"}
-            손이 없는 경우  → None  (prev_distance 초기화)
-        """
+        ix, iy = ignore_point
+        fallback = None
+        fallback_dist = -1
+
+        for hand in hand_landmarks:
+            landmarks = hand.landmark
+            thumb_tip = (
+                int(landmarks[THUMB_TIP].x * w),
+                int(landmarks[THUMB_TIP].y * h),
+            )
+            index_tip = (
+                int(landmarks[INDEX_TIP].x * w),
+                int(landmarks[INDEX_TIP].y * h),
+            )
+            pinch_center = (
+                (thumb_tip[0] + index_tip[0]) // 2,
+                (thumb_tip[1] + index_tip[1]) // 2,
+            )
+            dist_from_ignored = self._euclidean(pinch_center, (ix, iy))
+
+            if dist_from_ignored > fallback_dist:
+                fallback = landmarks
+                fallback_dist = dist_from_ignored
+            if dist_from_ignored >= ignore_radius_px:
+                return landmarks
+
+        if fallback_dist < ignore_radius_px:
+            self._reset_stroke()
+            return None
+        return fallback
+
+    def process_frame(self, frame_bgr, ignore_point=None) -> dict | None:
         h, w = frame_bgr.shape[:2]
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         result = self.hands.process(rgb)
 
         if not result.multi_hand_landmarks:
-            self._prev_distance = None  # 손 사라지면 기준점 리셋
+            self._reset_stroke()
             return None
 
-        # 첫 번째 손만 사용
-        landmarks = result.multi_hand_landmarks[0].landmark
+        landmarks = self._pick_landmarks(result.multi_hand_landmarks, w, h, ignore_point)
+        if landmarks is None:
+            return None
 
-        thumb_tip  = (int(landmarks[THUMB_TIP].x * w),
-                      int(landmarks[THUMB_TIP].y * h))
-        index_tip  = (int(landmarks[INDEX_TIP].x * w),
-                      int(landmarks[INDEX_TIP].y * h))
+        thumb_tip = (
+            int(landmarks[THUMB_TIP].x * w),
+            int(landmarks[THUMB_TIP].y * h),
+        )
+        index_tip = (
+            int(landmarks[INDEX_TIP].x * w),
+            int(landmarks[INDEX_TIP].y * h),
+        )
 
         pinch_dist = self._euclidean(thumb_tip, index_tip)
         zoom_delta = self._calc_zoom_delta(pinch_dist)
 
         return {
-            "index_tip"     : index_tip,
+            "index_tip": index_tip,
             "pinch_distance": round(pinch_dist, 2),
-            "zoom_delta"    : zoom_delta,
+            "zoom_delta": zoom_delta,
+            "zoom_mode": self._mode,
         }
 
     def release(self):
-        """MediaPipe 리소스 해제."""
         self.hands.close()
 
 
-# ── 단독 실행 (디버그용) ───────────────────────────────────────────────
 if __name__ == "__main__":
     cap = cv2.VideoCapture(0)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
 
     tracker = GestureZoomTracker()
-    mp_draw = mp.solutions.drawing_utils
 
-    print("핀치 제스처를 해보세요 (q: 종료)")
+    print("Move thumb/index pinch strokes. Press q to quit.")
 
     while True:
         ret, frame = cap.read()
@@ -140,20 +190,31 @@ if __name__ == "__main__":
 
         if data:
             ix, iy = data["index_tip"]
-            dist   = data["pinch_distance"]
-            delta  = data["zoom_delta"]
+            dist = data["pinch_distance"]
+            delta = data["zoom_delta"]
+            mode = data["zoom_mode"]
 
-            # 검지 끝 표시
             cv2.circle(frame, (ix, iy), 8, (0, 255, 0), -1)
+            cv2.putText(
+                frame,
+                f"pinch_distance: {dist:.1f}px",
+                (20, 40),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (255, 255, 255),
+                2,
+            )
+            cv2.putText(
+                frame,
+                f"zoom_delta: {delta:+.4f}  mode: {mode}",
+                (20, 75),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 255, 100) if delta >= 0 else (0, 100, 255),
+                2,
+            )
 
-            # 정보 오버레이
-            cv2.putText(frame, f"pinch_distance: {dist:.1f}px",
-                        (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(frame, f"zoom_delta:     {delta:+.4f}",
-                        (20, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.8,
-                        (0, 255, 100) if delta >= 0 else (0, 100, 255), 2)
-
-            print(data)  # Role 3에 넘길 dict 확인용
+            print(data)
 
         cv2.imshow("GestureZoomTracker", frame)
         if cv2.waitKey(1) & 0xFF == ord("q"):
