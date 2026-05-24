@@ -2,6 +2,7 @@ import cv2
 import mediapipe as mp
 import numpy as np
 import os
+import time
 from collections import deque
 from mediapipe.tasks import python as mp_python
 from mediapipe.tasks.python import vision as mp_vision
@@ -30,7 +31,6 @@ class HandTracker:
             running_mode=mp_vision.RunningMode.VIDEO
         )
         self.detector = mp_vision.HandLandmarker.create_from_options(options)
-        self.timestamp = 0
 
     def get_hand_position(self, frame):
         
@@ -38,8 +38,8 @@ class HandTracker:
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
 
-        self.timestamp += 1  # 하나씩 올라감 근데 밀리초 단위로 넣는게 나을수도?
-        result = self.detector.detect_for_video(mp_image, self.timestamp)
+        timestamp_ms = int(time.time() * 1000)
+        result = self.detector.detect_for_video(mp_image, timestamp_ms)
 
         if not result.hand_landmarks:
             self.history.clear()
