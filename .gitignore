@@ -1,11 +1,16 @@
-# 가상환경 폴더 무시
-venv*/
-venv/
-env/
-
-# 파이썬 캐시 파일 무시 
 __pycache__/
-*.pyc
+*.py[cod]
+*$py.class
 
-# 맥 OS 찌꺼기 파일 무시
+venv/
+.venv/
+env/
+.env/
+venv311/
+
+.idea/
+
+*.log
+*.tmp
 .DS_Store
+Thumbs.db
