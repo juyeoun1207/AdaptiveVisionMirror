@@ -8,17 +8,17 @@ THUMB_TIP = 4
 INDEX_TIP = 8
 
 # Distance change of 1px becomes this much zoom delta.
-SENSITIVITY = 0.005
+SENSITIVITY = 0.015
 
 # Ignore tiny finger jitter.
-DEAD_ZONE_PX = 4.0
+DEAD_ZONE_PX = 0.5
 
 # Stroke-style pinch thresholds.
 # - Start near and spread fingers to zoom in.
 # - Start far and pinch fingers together to zoom out.
 # Returning to the start position after a stroke is ignored, so zoom stays fixed.
-PINCH_START_PX = 55.0
-PINCH_END_PX = 130.0
+PINCH_START_PX = 30.0  # 적당히 오므려도 줌 인 준비 완료
+PINCH_END_PX = 90.0
 
 MODE_IDLE = "idle"
 MODE_ZOOM_IN = "zoom_in"

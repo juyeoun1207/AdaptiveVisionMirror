@@ -1,18 +1,25 @@
 import cv2
 import numpy as np
 from collections import deque
+
+
 from eyeGestures import EyeGestures_v3
 
 
 class GazeController:
     def __init__(self, screen_width=1280, screen_height=720,
-                 smooth_window=5, pip_smooth_window=15):
+                 smooth_window=4, pip_smooth_window=15):
         self.screen_width = screen_width
         self.screen_height = screen_height
         self.gestures = EyeGestures_v3()
 
-        # 처음에는 캘리브레이션 모드로 시작
+        
         self.calibrate = True
+        self.calib_frame_count = 0
+        self.max_calib_frames = 120
+
+        self.calib_frame_count = 0
+        self.max_calib_frames = 90
 
         self.gaze_history = deque(maxlen=smooth_window)
         self.pip_history = deque(maxlen=pip_smooth_window)
@@ -34,6 +41,12 @@ class GazeController:
             self.pinned_pip_pos = (self.pip_x, self.pip_y)
 
     def get_gaze_position(self, frame):
+        
+        if self.calibrate:
+            self.calib_frame_count += 1
+            if self.calib_frame_count > self.max_calib_frames:
+                self.calibrate = False
+                print("[Gaze] 🎯 캘리브레이션 자동 완료! 본격적인 시선 추적 시작.")
         try:
             event, cevent = self.gestures.step(
                 frame,

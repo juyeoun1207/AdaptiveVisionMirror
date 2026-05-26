@@ -445,6 +445,13 @@ class SideBar(QWidget):
         self._btn_mic.setText(
             "🎙\n마이크 ON" if self._mic_on else "🔇\n마이크 OFF"
         )
+        main_window = self.window()
+        main_window._mic_on = self._mic_on  # main.py의 음성 스레드가 이 변수를 봅니다.
+        
+        if self._mic_on:
+            main_window.update_subtitle("🎙️ [Voice ON] Microphone is active.")
+        else:
+            main_window.update_subtitle("🔇 [Voice OFF] Microphone is muted.")
 
     def _toggle_zoom_visibility(self):
         self._zoom_visible = not self._zoom_visible
@@ -747,22 +754,35 @@ class SmartMirrorApp(QMainWindow):
         box_cy = box.y() + bsz // 2
 
         fh_cam, fw_cam = frame.shape[:2]
-        scale      = max(fw / fw_cam, fh / fh_cam)   # cover: 이미지가 컨테이너를 꽉 채움
+        scale      = max(fw / fw_cam, fh / fh_cam)   
         rendered_w = int(fw_cam * scale)
         rendered_h = int(fh_cam * scale)
-        offset_x   = (rendered_w - fw) // 2          # 좌우로 잘린 픽셀 수
-        offset_y   = (rendered_h - fh) // 2          # 상하로 잘린 픽셀 수
+        offset_x   = (rendered_w - fw) // 2          
+        offset_y   = (rendered_h - fh) // 2          
 
-        cam_x = int((box_cx + offset_x) / scale)     # 잘린 부분을 더해서 역변환
-        cam_y = int((box_cy + offset_y) / scale)
+        # 💡 무엇을 잘라서 돋보기 안에 보여줄지 결정 (렌즈 중심점 계산)
+        if getattr(self, "_use_face_crop", False):
+            # 1순위: 눈/코/입 확대 타겟 버튼이 활성화되어 있을 때 (턱밑 고정 등)
+            cam_x = int(self._face_crop_x * fw_cam)
+            cam_y = int(self._face_crop_y * fh_cam)
+            
+        elif box.is_pinned() and (self._mode == MODE_GAZE or getattr(self, "_prev_mode_before_pin", None) == MODE_GAZE):
+            # 2순위: 시선 추적 모드에서 '고정'을 눌렀을 때 -> 렌즈(비추는 상)만 그 자리에 영구 박제!
+            cam_x = int(getattr(self, "_lens_x", self._track_x) * fw_cam)
+            cam_y = int(getattr(self, "_lens_y", self._track_y) * fh_cam)
+            
+        else:
+            # 3순위: 일반 미고정 상태 및 타 모드(손 추적) 고정 상태 
+            # -> 물리적인 일반 돋보기처럼 박스가 놓여있는 물리적 위치의 해상도를 크롭함!
+            cam_x = int((box_cx + offset_x) / scale)
+            cam_y = int((box_cy + offset_y) / scale)
+
         cam_x = max(0, min(cam_x, fw_cam - 1))
         cam_y = max(0, min(cam_y, fh_cam - 1))
 
         r_at_1x = (bsz / 2) / scale
         r = max(15, int(r_at_1x / max(1.0, self._zoom_scale)))
 
-        # 크롭 창을 항상 2r×2r로 고정하고, 경계를 벗어나면 창을 밀어서 유지
-        # (클램핑하면 창이 작아져 같은 박스에 늘어나므로 배율이 뛰어 보임)
         x1, x2 = cam_x - r, cam_x + r
         y1, y2 = cam_y - r, cam_y + r
         if x1 < 0:       x1, x2 = 0, min(fw_cam, 2 * r)
@@ -773,12 +793,7 @@ class SmartMirrorApp(QMainWindow):
         if crop.size == 0:
             return
 
-        qi = QImage(
-            crop.data,
-            crop.shape[1], crop.shape[0],
-            crop.shape[1] * 3,
-            QImage.Format_RGB888,
-        )
+        qi = QImage(crop.data, crop.shape[1], crop.shape[0], crop.shape[1] * 3, QImage.Format_RGB888)
         box.set_frame(QPixmap.fromImage(qi))
 
     # ── 키보드 / 휠 ────────────────────────────────────────────────────
@@ -845,11 +860,30 @@ class SmartMirrorApp(QMainWindow):
 
     def _on_toggle_pin(self):
         """돋보기 박스 고정 / 해제 토글."""
-        self._feed.zoom_box.toggle_pin()
-        if self._feed.zoom_box.is_pinned():
-            self._set_mode(MODE_PINNED)
+        box = self._feed.zoom_box
+        box.toggle_pin()
+        
+        if box.is_pinned():
+            # 💡 고정하는 순간의 현재 위치를 렌즈 좌표로 영구 박제!
+            self._lens_x = self._track_x
+            self._lens_y = self._track_y
+            
+            # 🔥 [핵심] 시선 추적 모드일 때는 MODE_PINNED로 모드를 바꾸지 않고 유지합니다!
+            # 그래야 main.py가 데이터를 계속 보내주고 박스가 시선을 따라 날아다닙니다.
+            if self._mode == MODE_GAZE:
+                self.update_subtitle("📌 [시선 고정] 상은 고정되고, 박스는 시선을 따라 움직입니다.")
+            else:
+                # 손 추적 등 다른 모드일 때는 원래 명세대로 고정 모드로 전환하여 통째로 묶어버립니다.
+                self._prev_mode_before_pin = self._mode  # 해제 시 복귀용 백업
+                self._set_mode(MODE_PINNED)
+                self.update_subtitle("📌 [전체 고정] 돋보기 박스와 상이 모두 고정됩니다.")
         else:
-            self._set_mode(MODE_TRACKING)
+            # 고정 해제 시 원래 상태로 복귀
+            if getattr(self, "_mode", None) == MODE_PINNED and hasattr(self, "_prev_mode_before_pin"):
+                self._set_mode(self._prev_mode_before_pin)
+            else:
+                self._set_mode(MODE_TRACKING)
+            self.update_subtitle("📌 고정 해제됨 — 다시 정상 추적합니다.")
 
     def _on_toggle_zoom_box(self):
         box = self._feed.zoom_box
@@ -902,14 +936,27 @@ class SmartMirrorApp(QMainWindow):
         self._track_y = float(y_norm)
         self._set_zoom(float(zoom_scale))
 
-        if not self._feed.zoom_box.is_pinned():
-            fw   = self._feed.width()
-            fh   = self._feed.height()
-            sz   = self._feed.zoom_box.current_size
-            half = sz // 2
-            bx   = max(0, min(int(x_norm * fw) - half, fw - sz))
-            by   = max(0, min(int(y_norm * fh) - half, fh - sz))
-            self._feed.zoom_box.move(bx, by)
+        is_pinned = self._feed.zoom_box.is_pinned()
+
+        # 💡 [핵심] AI가 돋보기 박스 위치를 제어하도록 허용된 '자동 모드' 명단
+        auto_modes = [MODE_GAZE, MODE_HAND, MODE_EYE, MODE_NOSE, MODE_MOUTH]
+
+        # :기본 모드(MODE_TRACKING)면 AI는 박스를 절대 건드리지 않고 조용히 퇴장 (오직 마우스만 허용)
+        if self._mode not in auto_modes:
+            return
+            
+        # 고정(Pinned) 상태일 때, 시선 모드가 아니라면 박스 이동 정지
+        if is_pinned and self._mode != MODE_GAZE:
+            return
+
+        # 위 두 개의 방어막을 무사히 통과했을 때만 AI 좌표로 박스를 움직입니다.
+        fw   = self._feed.width()
+        fh   = self._feed.height()
+        sz   = self._feed.zoom_box.current_size
+        half = sz // 2
+        bx   = max(0, min(int(self._track_x * fw) - half, fw - sz))
+        by   = max(0, min(int(self._track_y * fh) - half, fh - sz))
+        self._feed.zoom_box.move(bx, by)
 
     def get_current_mode(self) -> str:
         """현재 활성 모드 문자열 반환."""
