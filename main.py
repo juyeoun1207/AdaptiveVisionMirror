@@ -4,6 +4,11 @@ import queue
 import time
 import cv2
 
+from tracker.hand_tracker import HandTracker
+from tracker.gaze_controller import GazeController
+from zoom.gesture_zoom_tracker import GestureZoomTracker
+from tracker.face_region_tracker import FaceRegionTracker
+
 # PyQt5 모듈
 from PyQt5.QtWidgets import QApplication
 from PyQt5.QtCore import QTimer, QMetaObject, Qt, Q_ARG
@@ -12,10 +17,6 @@ from PyQt5.QtCore import QTimer, QMetaObject, Qt, Q_ARG
 # Role 1 (UI)
 from mirror_ui import SmartMirrorApp, MODE_HAND, MODE_GAZE, MODE_MOUTH,MODE_TRACKING, MODE_EYE, MODE_NOSE
 # Role 2 (Vision)
-from tracker.hand_tracker import HandTracker
-from tracker.gaze_controller import GazeController
-from zoom.gesture_zoom_tracker import GestureZoomTracker
-from tracker.face_region_tracker import FaceRegionTracker
 # Role 3 (Voice)
 from voice_listener import listen_command
 
