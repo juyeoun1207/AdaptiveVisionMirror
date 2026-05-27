@@ -445,7 +445,7 @@ class SideBar(QWidget):
     def _toggle_mic(self):
         self._mic_on = not self._mic_on
         self._btn_mic.setText(
-            "🎙\n마이크 ON" if self._mic_on else "🔇\n마이크 OFF"
+            "🎙\nMIC ON" if self._mic_on else "🔇\nMIC OFF"
         )
         main_window = self.window()
         main_window._mic_on = self._mic_on  # main.py의 음성 스레드가 이 변수를 봅니다.
@@ -458,7 +458,7 @@ class SideBar(QWidget):
     def _toggle_zoom_visibility(self):
         self._zoom_visible = not self._zoom_visible
         self._btn_zoom_tog.setText(
-            "🔲\n돋보기 끄기" if self._zoom_visible else "🔲\n돋보기 켜기"
+            "🔲\nTurnOff\n ZoomBox" if self._zoom_visible else "🔲\nTurnOn\n ZoomBox"
         )
         self.toggle_zoom.emit()
 
@@ -773,7 +773,7 @@ class SmartMirrorApp(QMainWindow):
             cam_x = int(getattr(self, "_lens_x", self._track_x) * fw_cam)
             cam_y = int(getattr(self, "_lens_y", self._track_y) * fh_cam)
 
-        elif box.is_pinned() and self._mode == MODE_HAND:
+        elif box.is_pinned() and self._mode == MODE_HAND:   
             # 💡 [신규 3순위] 손 추적 고정 -> 박스는 고정되고, 상(렌즈)은 손을 따라갑니다!
             cam_x = int(self._track_x * fw_cam)
             cam_y = int(self._track_y * fh_cam)
