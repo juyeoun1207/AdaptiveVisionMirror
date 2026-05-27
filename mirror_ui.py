@@ -111,7 +111,7 @@ class DraggableLabel(QLabel):
     • 더블클릭 or 키 T  → 상태 토글
     """
 
-    SIZE = 300
+    SIZE = 400
 
     position_changed = pyqtSignal()
 
@@ -378,7 +378,7 @@ class UserSelectOverlay(QWidget):
 class SideBar(QWidget):
     """화면 우측 가장자리에 부유하는 반투명 세로 버튼 바."""
 
-    WIDTH = 120
+    WIDTH = 140
 
     mode_basic      = pyqtSignal()
     mode_hand       = pyqtSignal()
@@ -400,13 +400,13 @@ class SideBar(QWidget):
         layout.setContentsMargins(8, 24, 8, 24)
         layout.setSpacing(14)
 
-        self._btn_basic     = self._make_btn("🔍\n기본 모드")
-        self._btn_hand      = self._make_btn("✋\n손 추적")
-        self._btn_gaze      = self._make_btn("👁\n시선 추적")
-        self._btn_mic       = self._make_btn("🎙\n마이크 ON")
-        self._btn_zoom_tog  = self._make_btn("🔲\n돋보기 끄기")
-        self._btn_zoom_plus = self._make_btn("🔳\n박스 크기 +")
-        self._btn_zoom_minus= self._make_btn("▪\n박스 크기 -")
+        self._btn_basic     = self._make_btn("🔍\nManual")
+        self._btn_hand      = self._make_btn("✋\nHand Tracking")
+        self._btn_gaze      = self._make_btn("👁\nGaze Tracking")
+        self._btn_mic       = self._make_btn("🎙\nMIC ON")
+        self._btn_zoom_tog  = self._make_btn("🔲\nTurnOff\n ZoomBox")
+        self._btn_zoom_plus = self._make_btn("+", 50)
+        self._btn_zoom_minus= self._make_btn("-\n    \n \n",70)
 
         self._btn_basic.clicked.connect(self.mode_basic)
         self._btn_hand.clicked.connect(self.mode_hand)
@@ -424,16 +424,18 @@ class SideBar(QWidget):
         layout.addStretch()
 
     @staticmethod
-    def _make_btn(label: str) -> QPushButton:
+    def _make_btn(label: str, font_size = 12) -> QPushButton:
         btn = QPushButton(label)
-        btn.setFixedSize(100, 80)
-        btn.setFont(QFont("Segoe UI", 11))
+        btn.setFixedSize(130, 100)
+        btn.setFont(QFont("Segoe UI", font_size))
         btn.setStyleSheet("""
             QPushButton {
                 background: rgba(0, 0, 0, 120);
                 color: #FFFFFF;
                 border: 1px solid rgba(255, 255, 255, 70);
                 border-radius: 12px;
+                text-align: center;      /* 가로 중앙 정렬 */
+                padding-bottom: 10px;
             }
             QPushButton:hover   { background: rgba(255, 255, 255, 55); }
             QPushButton:pressed { background: rgba(255, 255, 255, 100); }
@@ -762,18 +764,23 @@ class SmartMirrorApp(QMainWindow):
 
         # 💡 무엇을 잘라서 돋보기 안에 보여줄지 결정 (렌즈 중심점 계산)
         if getattr(self, "_use_face_crop", False):
-            # 1순위: 눈/코/입 확대 타겟 버튼이 활성화되어 있을 때 (턱밑 고정 등)
+            # 1순위: 눈/코/입 확대 타겟 버튼이 활성화되어 있을 때
             cam_x = int(self._face_crop_x * fw_cam)
             cam_y = int(self._face_crop_y * fh_cam)
             
         elif box.is_pinned() and (self._mode == MODE_GAZE or getattr(self, "_prev_mode_before_pin", None) == MODE_GAZE):
-            # 2순위: 시선 추적 모드에서 '고정'을 눌렀을 때 -> 렌즈(비추는 상)만 그 자리에 영구 박제!
+            # 2순위: 시선 추적 고정 -> 렌즈(비추는 상)만 그 자리에 영구 박제!
             cam_x = int(getattr(self, "_lens_x", self._track_x) * fw_cam)
             cam_y = int(getattr(self, "_lens_y", self._track_y) * fh_cam)
+
+        elif box.is_pinned() and self._mode == MODE_HAND:
+            # 💡 [신규 3순위] 손 추적 고정 -> 박스는 고정되고, 상(렌즈)은 손을 따라갑니다!
+            cam_x = int(self._track_x * fw_cam)
+            cam_y = int(self._track_y * fh_cam)
             
         else:
-            # 3순위: 일반 미고정 상태 및 타 모드(손 추적) 고정 상태 
-            # -> 물리적인 일반 돋보기처럼 박스가 놓여있는 물리적 위치의 해상도를 크롭함!
+            # 4순위: 일반 미고정 상태 및 타 모드 고정 상태 
+            # -> 물리적인 일반 돋보기처럼 박스가 놓여있는 위치의 해상도를 크롭함!
             cam_x = int((box_cx + offset_x) / scale)
             cam_y = int((box_cy + offset_y) / scale)
 
@@ -872,6 +879,8 @@ class SmartMirrorApp(QMainWindow):
             # 그래야 main.py가 데이터를 계속 보내주고 박스가 시선을 따라 날아다닙니다.
             if self._mode == MODE_GAZE:
                 self.update_subtitle("📌 [시선 고정] 상은 고정되고, 박스는 시선을 따라 움직입니다.")
+            elif self._mode == MODE_HAND:
+                self.update_subtitle("📌 [손 고정] 박스는 고정되고, 상이 손을 따라 이동합니다.")
             else:
                 # 손 추적 등 다른 모드일 때는 원래 명세대로 고정 모드로 전환하여 통째로 묶어버립니다.
                 self._prev_mode_before_pin = self._mode  # 해제 시 복귀용 백업
@@ -881,6 +890,8 @@ class SmartMirrorApp(QMainWindow):
             # 고정 해제 시 원래 상태로 복귀
             if getattr(self, "_mode", None) == MODE_PINNED and hasattr(self, "_prev_mode_before_pin"):
                 self._set_mode(self._prev_mode_before_pin)
+            elif self._mode in [MODE_GAZE, MODE_HAND]:
+                pass
             else:
                 self._set_mode(MODE_TRACKING)
             self.update_subtitle("📌 고정 해제됨 — 다시 정상 추적합니다.")
@@ -946,7 +957,7 @@ class SmartMirrorApp(QMainWindow):
             return
             
         # 고정(Pinned) 상태일 때, 시선 모드가 아니라면 박스 이동 정지
-        if is_pinned and self._mode != MODE_GAZE:
+        if is_pinned and (self._mode != MODE_GAZE):
             return
 
         # 위 두 개의 방어막을 무사히 통과했을 때만 AI 좌표로 박스를 움직입니다.
