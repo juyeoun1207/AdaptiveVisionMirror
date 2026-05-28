@@ -26,7 +26,8 @@ system_running = True
 
 shared_state = {
     "track_x": 0.5, "track_y": 0.5, "zoom": 1.0,
-    "use_face": False, "face_x": 0.5, "face_y": 0.5 ,"gesture_zoom": None
+    "use_face": False, "face_x": 0.5, "face_y": 0.5, "gesture_zoom": None,
+    "hand_x": None, "hand_y": None,
 }
 
 # =====================================================================
@@ -65,7 +66,19 @@ def run_vision_thread(window):
         h, w = frame.shape[:2]
         
         try:
-            gesture_data = gesture_tracker.process_frame(frame)
+            hand_pos = None
+            if current_mode in [MODE_HAND, MODE_GAZE]:
+                hand_pos = hand_tracker.get_hand_position(frame)
+                if hand_pos:
+                    shared_state["hand_x"] = hand_pos[0] / w
+                    shared_state["hand_y"] = hand_pos[1] / h
+                else:
+                    shared_state["hand_x"] = None
+                    shared_state["hand_y"] = None
+
+            gesture_data = None
+            if current_mode in [MODE_HAND, MODE_GAZE]:
+                gesture_data = gesture_tracker.process_frame(frame, ignore_point=hand_pos)
             
             # 손이 인식되었고 데이터가 넘어왔다면
             if gesture_data:
@@ -86,6 +99,8 @@ def run_vision_thread(window):
             
             # [A] 얼굴 부위(사각지대) 모드: 렌즈는 특정 부위에 박제, 박스는 고개(코)를 따라감!
             if current_mode in [MODE_EYE, MODE_NOSE, MODE_MOUTH]:
+                shared_state["hand_x"] = None
+                shared_state["hand_y"] = None
                 region_key = ord('e') if current_mode == MODE_EYE else ord('n') if current_mode == MODE_NOSE else ord('m')
                 if region_key == ord('e'):
                     subtitle = "EYE Magnifying"
@@ -112,30 +127,27 @@ def run_vision_thread(window):
             # [B] 일반 시선 추적 모드 (헤드 트래킹 대체 모드)
             elif current_mode == MODE_GAZE:
                 shared_state["use_face"] = False 
-                
-                if bbox_nose:
-                    nx = ((bbox_nose[0] + bbox_nose[2]) / w)
-                    nx = ((bbox_nose[0] + bbox_nose[2]) / 2) / w
-                    ny = ((bbox_nose[1] + bbox_nose[3]) / 2) / h
-                    
-                    # 💡 수정됨: '1.0 -' 거울 반전 수식 제거 및 고개 감도 2.0배 증폭!
-                    shared_state["track_x"] = max(0.0, min(1.0, 0.5 + (nx - 0.5) * 2.0))
-                    shared_state["track_y"] = max(0.0, min(1.0, 0.5 + (ny - 0.5) * 2.0))
-                    
-                window.update_subtitle("👁️ Gaze Tracking Mode")
+
+                gaze_pos, _, _ = gaze_tracker.get_gaze_position(frame)
+                if gaze_pos:
+                    shared_state["track_x"] = gaze_pos[0] / gaze_tracker.screen_width
+                    shared_state["track_y"] = gaze_pos[1] / gaze_tracker.screen_height
+
+                window.update_subtitle("👁️ Gaze Tracking + Hand Position")
 
             # [C] 손 추적 모드
             elif current_mode == MODE_HAND:
                 shared_state["use_face"] = False
-                pos = hand_tracker.get_hand_position(frame)
-                if pos:
-                    shared_state["track_x"] = pos[0] / w
-                    shared_state["track_y"] = pos[1] / h
+                if hand_pos:
+                    shared_state["track_x"] = hand_pos[0] / w
+                    shared_state["track_y"] = hand_pos[1] / h
                 window.update_subtitle("✋ Hand Tracking Mode")
 
             # [D] 기본 모드 (아무것도 안 함!)
             else:
                 shared_state["use_face"] = False
+                shared_state["hand_x"] = None
+                shared_state["hand_y"] = None
                 window.update_subtitle("Manual Mode")
                 # 💡 기본 모드일 때는 track_x, track_y를 건드리지 않습니다.
 
@@ -176,7 +188,7 @@ def poll_event_queue(window):
             # --- 2. 추적 모드 전환 ---
             elif action == "MODE_BASIC":
                 window.update_subtitle("🎙️ Switched to Manual Mode.")
-                window._set_mode(MODE_TRACKING)
+                window._on_manual_mode()
                 
             elif action == "MODE_HAND":
                 window.update_subtitle("🎙️ Hand Tracking Mode ON.")
@@ -212,15 +224,17 @@ def poll_event_queue(window):
         shared_state["gesture_zoom"] = None  # UI에 적용했으니 다시 비워둠 (1회성 소비)
 
 
-    new_gesture_zoom = shared_state.get("gesture_zoom")
-    if new_gesture_zoom is not None:
-        window._set_zoom(new_gesture_zoom)
-        shared_state["gesture_zoom"] = None  # UI에 적용했으니 다시 비워둠
-
     # 기존 코드 유지
     window._use_face_crop = shared_state.get("use_face", False)
     window._face_crop_x = shared_state.get("face_x", 0.5)
     window._face_crop_y = shared_state.get("face_y", 0.5)
+    if window.get_current_mode() in [MODE_GAZE, MODE_HAND]:
+        window.update_hand_crop_position(
+            shared_state.get("hand_x"),
+            shared_state.get("hand_y"),
+        )
+    else:
+        window.update_hand_crop_position(None, None)
 
     window.update_tracking_data(
         shared_state.get("track_x", 0.5), 

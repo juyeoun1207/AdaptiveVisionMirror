@@ -378,12 +378,14 @@ class UserSelectOverlay(QWidget):
 class SideBar(QWidget):
     """화면 우측 가장자리에 부유하는 반투명 세로 버튼 바."""
 
-    WIDTH = 140
+    WIDTH = 240
 
     mode_basic      = pyqtSignal()
     mode_hand       = pyqtSignal()
     mode_gaze       = pyqtSignal()
     toggle_zoom     = pyqtSignal()
+    zoom_scale_plus = pyqtSignal()
+    zoom_scale_minus= pyqtSignal()
     zoom_size_plus  = pyqtSignal()
     zoom_size_minus = pyqtSignal()
 
@@ -392,55 +394,90 @@ class SideBar(QWidget):
         self.setFixedWidth(self.WIDTH)
         self._mic_on      = True
         self._zoom_visible = True
+        self._active_mode = None
         self._build()
 
     def _build(self):
         layout = QVBoxLayout(self)
         layout.setAlignment(Qt.AlignTop | Qt.AlignHCenter)
-        layout.setContentsMargins(8, 24, 8, 24)
-        layout.setSpacing(14)
+        layout.setContentsMargins(10, 12, 10, 12)
+        layout.setSpacing(8)
 
         self._btn_basic     = self._make_btn("🔍\nManual")
-        self._btn_hand      = self._make_btn("✋\nHand Tracking")
-        self._btn_gaze      = self._make_btn("👁\nGaze Tracking")
+        self._btn_hand      = self._make_btn("✋\nHand\nTracking")
+        self._btn_gaze      = self._make_btn("👁\nGaze\nTracking", role="gaze")
         self._btn_mic       = self._make_btn("🎙\nMIC ON")
-        self._btn_zoom_tog  = self._make_btn("🔲\nTurnOff\n ZoomBox")
-        self._btn_zoom_plus = self._make_btn("+", 50)
-        self._btn_zoom_minus= self._make_btn("-\n    \n \n",70)
+        self._btn_zoom_tog  = self._make_btn("🔲\nTurnOff\nZoomBox")
+        self._btn_zoom_plus = self._make_btn("+", 46)
+        self._btn_zoom_minus= self._make_btn("-", 56, role="minus")
+        self._btn_box_plus  = self._make_btn("🔲 +", 18, role="box")
+        self._btn_box_minus = self._make_btn("🔲 -", 18, role="box")
+        self._mode_buttons = {
+            MODE_TRACKING: self._btn_basic,
+            MODE_HAND: self._btn_hand,
+            MODE_GAZE: self._btn_gaze,
+        }
 
         self._btn_basic.clicked.connect(self.mode_basic)
         self._btn_hand.clicked.connect(self.mode_hand)
         self._btn_gaze.clicked.connect(self.mode_gaze)
         self._btn_mic.clicked.connect(self._toggle_mic)
         self._btn_zoom_tog.clicked.connect(self._toggle_zoom_visibility)
-        self._btn_zoom_plus.clicked.connect(self.zoom_size_plus)
-        self._btn_zoom_minus.clicked.connect(self.zoom_size_minus)
+        self._btn_zoom_plus.clicked.connect(self.zoom_scale_plus)
+        self._btn_zoom_minus.clicked.connect(self.zoom_scale_minus)
+        self._btn_box_plus.clicked.connect(self.zoom_size_plus)
+        self._btn_box_minus.clicked.connect(self.zoom_size_minus)
 
         for btn in (
             self._btn_basic, self._btn_hand, self._btn_gaze, self._btn_mic,
             self._btn_zoom_tog, self._btn_zoom_plus, self._btn_zoom_minus,
+            self._btn_box_plus, self._btn_box_minus,
         ):
             layout.addWidget(btn)
         layout.addStretch()
 
-    @staticmethod
-    def _make_btn(label: str, font_size = 12) -> QPushButton:
+    def _make_btn(self, label: str, font_size = 14, role: str = "default") -> QPushButton:
         btn = QPushButton(label)
-        btn.setFixedSize(130, 100)
+        btn.setFixedSize(220, 98)
         btn.setFont(QFont("Segoe UI", font_size))
-        btn.setStyleSheet("""
-            QPushButton {
-                background: rgba(0, 0, 0, 120);
-                color: #FFFFFF;
-                border: 1px solid rgba(255, 255, 255, 70);
-                border-radius: 12px;
-                text-align: center;      /* 가로 중앙 정렬 */
-                padding-bottom: 10px;
-            }
-            QPushButton:hover   { background: rgba(255, 255, 255, 55); }
-            QPushButton:pressed { background: rgba(255, 255, 255, 100); }
-        """)
+        btn._sidebar_role = role
+        btn.setStyleSheet(self._btn_style(role, active=False))
         return btn
+
+    @staticmethod
+    def _btn_style(role: str = "default", active: bool = False) -> str:
+        bg = "rgba(0, 0, 0, 135)"
+        hover = "rgba(255, 255, 255, 55)"
+        if role == "gaze":
+            bg = "rgba(20, 18, 48, 190)"
+            hover = "rgba(42, 36, 86, 220)"
+        elif role == "box":
+            bg = "rgba(18, 54, 47, 175)"
+            hover = "rgba(31, 86, 74, 220)"
+        padding = "4px 6px 12px 6px" if role == "minus" else "4px 6px"
+        border = "#FFD400" if active else "rgba(255, 255, 255, 70)"
+        border_width = 4 if active else 1
+        return f"""
+            QPushButton {{
+                background: {bg};
+                color: #FFFFFF;
+                border: {border_width}px solid {border};
+                border-radius: 12px;
+                text-align: center;
+                padding: {padding};
+            }}
+            QPushButton:hover   {{ background: {hover}; }}
+            QPushButton:pressed {{ background: rgba(255, 255, 255, 100); }}
+        """
+
+    def set_active_mode(self, mode: str):
+        self._active_mode = mode
+        active_modes = {mode}
+        if mode == MODE_GAZE:
+            active_modes.add(MODE_HAND)
+        for button_mode, button in self._mode_buttons.items():
+            role = getattr(button, "_sidebar_role", "default")
+            button.setStyleSheet(self._btn_style(role, active=(button_mode in active_modes)))
 
     def _toggle_mic(self):
         self._mic_on = not self._mic_on
@@ -458,7 +495,7 @@ class SideBar(QWidget):
     def _toggle_zoom_visibility(self):
         self._zoom_visible = not self._zoom_visible
         self._btn_zoom_tog.setText(
-            "🔲\nTurnOff\n ZoomBox" if self._zoom_visible else "🔲\nTurnOn\n ZoomBox"
+            "🔲\nTurnOff\nZoomBox" if self._zoom_visible else "🔲\nTurnOn\nZoomBox"
         )
         self.toggle_zoom.emit()
 
@@ -549,6 +586,8 @@ class SmartMirrorApp(QMainWindow):
         self._zoom_scale:   float = 1.0
         self._track_x:      float = 0.5
         self._track_y:      float = 0.5
+        self._hand_crop_x:  Optional[float] = None
+        self._hand_crop_y:  Optional[float] = None
         self._current_user: str   = ""
         self._last_rgb:     Optional[np.ndarray] = None
 
@@ -684,11 +723,13 @@ class SmartMirrorApp(QMainWindow):
 
     def _connect_sidebar(self):
         sb = self._feed.sidebar
-        sb.mode_basic.connect(lambda: self._set_mode(MODE_TRACKING))
+        sb.mode_basic.connect(self._on_manual_mode)
         # Role 2: 아래 두 시그널에 추가로 connect해 추적 로직 시작/전환
-        sb.mode_hand.connect(lambda: self._set_mode(MODE_HAND))
-        sb.mode_gaze.connect(lambda: self._set_mode(MODE_GAZE))
+        sb.mode_hand.connect(self._on_hand_mode_button)
+        sb.mode_gaze.connect(self._on_gaze_mode_button)
         sb.toggle_zoom.connect(self._on_toggle_zoom_box)
+        sb.zoom_scale_plus.connect(self._on_zoom_scale_plus)
+        sb.zoom_scale_minus.connect(self._on_zoom_scale_minus)
         sb.zoom_size_plus.connect(self._on_zoom_size_plus)
         sb.zoom_size_minus.connect(self._on_zoom_size_minus)
 
@@ -763,20 +804,14 @@ class SmartMirrorApp(QMainWindow):
         offset_y   = (rendered_h - fh) // 2          
 
         # 💡 무엇을 잘라서 돋보기 안에 보여줄지 결정 (렌즈 중심점 계산)
-        if getattr(self, "_use_face_crop", False):
+        if self._mode in [MODE_GAZE, MODE_HAND] and self._hand_crop_x is not None and self._hand_crop_y is not None:
+            cam_x = int(self._hand_crop_x * fw_cam)
+            cam_y = int(self._hand_crop_y * fh_cam)
+
+        elif getattr(self, "_use_face_crop", False):
             # 1순위: 눈/코/입 확대 타겟 버튼이 활성화되어 있을 때
             cam_x = int(self._face_crop_x * fw_cam)
             cam_y = int(self._face_crop_y * fh_cam)
-            
-        elif box.is_pinned() and (self._mode == MODE_GAZE or getattr(self, "_prev_mode_before_pin", None) == MODE_GAZE):
-            # 2순위: 시선 추적 고정 -> 렌즈(비추는 상)만 그 자리에 영구 박제!
-            cam_x = int(getattr(self, "_lens_x", self._track_x) * fw_cam)
-            cam_y = int(getattr(self, "_lens_y", self._track_y) * fh_cam)
-
-        elif box.is_pinned() and self._mode == MODE_HAND:   
-            # 💡 [신규 3순위] 손 추적 고정 -> 박스는 고정되고, 상(렌즈)은 손을 따라갑니다!
-            cam_x = int(self._track_x * fw_cam)
-            cam_y = int(self._track_y * fh_cam)
             
         else:
             # 4순위: 일반 미고정 상태 및 타 모드 고정 상태 
@@ -837,26 +872,69 @@ class SmartMirrorApp(QMainWindow):
     def _set_mode(self, mode: str):
         self._mode = mode
         self._mode_label.setText(f"[모드] {mode}")
+        if hasattr(self, "_feed") and hasattr(self._feed, "sidebar"):
+            self._feed.sidebar.set_active_mode(mode)
 
     def _set_zoom(self, scale: float):
         self._zoom_scale = scale
         self._zoom_label.setText(f"배율: {scale:.1f}x")
 
+    def _on_manual_mode(self):
+        box = self._feed.zoom_box
+        if box.is_pinned():
+            box.set_pinned(False)
+        self.update_hand_crop_position(None, None)
+        self._set_mode(MODE_TRACKING)
+        self.update_subtitle("Manual Mode")
+
+    def _cancel_active_tracking_mode(self):
+        self.update_hand_crop_position(None, None)
+        self._set_mode(MODE_TRACKING)
+        self.update_subtitle("Manual Mode")
+
+    def _on_hand_mode_button(self):
+        if self._mode in [MODE_HAND, MODE_GAZE]:
+            self._cancel_active_tracking_mode()
+            return
+        self._set_mode(MODE_HAND)
+
+    def _on_gaze_mode_button(self):
+        if self._mode == MODE_GAZE:
+            self._cancel_active_tracking_mode()
+            return
+        self._set_mode(MODE_GAZE)
+
+    def update_hand_crop_position(self, x_norm: Optional[float], y_norm: Optional[float]) -> None:
+        if x_norm is None or y_norm is None:
+            self._hand_crop_x = None
+            self._hand_crop_y = None
+            return
+
+        self._hand_crop_x = max(0.0, min(1.0, float(x_norm)))
+        self._hand_crop_y = max(0.0, min(1.0, float(y_norm)))
+
+    def _set_manual_box_crop_mode(self, mode: str):
+        box = self._feed.zoom_box
+        if box.is_pinned():
+            box.set_pinned(False)
+        self.update_hand_crop_position(None, None)
+        self._set_mode(mode)
+
     # ── 버튼 / 키 핸들러 스켈레톤 (Role 2가 내부 로직을 채운다) ──────────
 
     def _on_eye_zoom(self):
         """눈 확대 모드 전환. Role 2: 눈 랜드마크 ROI 추적을 여기에 연결."""
-        self._set_mode(MODE_EYE)
+        self._set_manual_box_crop_mode(MODE_EYE)
         # TODO (Role 2): e.g. vision_controller.set_roi("eye")
 
     def _on_nose_zoom(self):
         """코 확대 모드 전환. Role 2: 코 랜드마크 ROI 추적을 여기에 연결."""
-        self._set_mode(MODE_NOSE)
+        self._set_manual_box_crop_mode(MODE_NOSE)
         # TODO (Role 2): e.g. vision_controller.set_roi("nose")
 
     def _on_mouth_zoom(self):
         """입 확대 모드 전환. Role 2: 입 랜드마크 ROI 추적을 여기에 연결."""
-        self._set_mode(MODE_MOUTH)
+        self._set_manual_box_crop_mode(MODE_MOUTH)
         # TODO (Role 2): e.g. vision_controller.set_roi("mouth")
 
     def _on_zoom_reset(self):
@@ -875,12 +953,10 @@ class SmartMirrorApp(QMainWindow):
             self._lens_x = self._track_x
             self._lens_y = self._track_y
             
-            # 🔥 [핵심] 시선 추적 모드일 때는 MODE_PINNED로 모드를 바꾸지 않고 유지합니다!
-            # 그래야 main.py가 데이터를 계속 보내주고 박스가 시선을 따라 날아다닙니다.
             if self._mode == MODE_GAZE:
-                self.update_subtitle("📌 [시선 고정] 상은 고정되고, 박스는 시선을 따라 움직입니다.")
+                self.update_subtitle("📌 [시선 고정] 박스는 고정되고, 안쪽 화면은 손을 따라갑니다.")
             elif self._mode == MODE_HAND:
-                self.update_subtitle("📌 [손 고정] 박스는 고정되고, 상이 손을 따라 이동합니다.")
+                self.update_subtitle("📌 [손 고정] 박스는 고정되고, 안쪽 화면은 손을 따라갑니다.")
             else:
                 # 손 추적 등 다른 모드일 때는 원래 명세대로 고정 모드로 전환하여 통째로 묶어버립니다.
                 self._prev_mode_before_pin = self._mode  # 해제 시 복귀용 백업
@@ -904,9 +980,17 @@ class SmartMirrorApp(QMainWindow):
             box.show()
             self._update_zoom_box()
 
+    def _on_zoom_scale_plus(self):
+        self._set_zoom(round(min(5.0, self._zoom_scale + 0.5), 2))
+        self._update_zoom_box()
+
+    def _on_zoom_scale_minus(self):
+        self._set_zoom(round(max(1.0, self._zoom_scale - 0.5), 2))
+        self._update_zoom_box()
+
     def _on_zoom_size_plus(self):
         box = self._feed.zoom_box
-        new_size = min(500, box.current_size + 50)
+        new_size = min(700, box.current_size + 50)
         box.resize_box(new_size)
         self._update_zoom_box()
 
@@ -950,14 +1034,14 @@ class SmartMirrorApp(QMainWindow):
         is_pinned = self._feed.zoom_box.is_pinned()
 
         # 💡 [핵심] AI가 돋보기 박스 위치를 제어하도록 허용된 '자동 모드' 명단
-        auto_modes = [MODE_GAZE, MODE_HAND, MODE_EYE, MODE_NOSE, MODE_MOUTH]
+        auto_modes = [MODE_GAZE]
 
         # :기본 모드(MODE_TRACKING)면 AI는 박스를 절대 건드리지 않고 조용히 퇴장 (오직 마우스만 허용)
         if self._mode not in auto_modes:
             return
             
-        # 고정(Pinned) 상태일 때, 시선 모드가 아니라면 박스 이동 정지
-        if is_pinned and (self._mode != MODE_GAZE):
+        # 고정(Pinned) 상태에서는 모드와 무관하게 박스 이동 정지
+        if is_pinned:
             return
 
         # 위 두 개의 방어막을 무사히 통과했을 때만 AI 좌표로 박스를 움직입니다.

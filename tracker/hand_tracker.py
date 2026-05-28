@@ -24,7 +24,7 @@ class HandTracker:
         )
         options = mp_vision.HandLandmarkerOptions(
             base_options=base_options,
-            num_hands=1,  # 최대 손 1개만 인식 (일단은 처음 인식된 손을 쭉 인식)
+            num_hands=2,
             min_hand_detection_confidence=0.7,
             min_hand_presence_confidence=0.5,
             min_tracking_confidence=0.5,
@@ -43,11 +43,12 @@ class HandTracker:
 
         if not result.hand_landmarks:
             self.history.clear()
+            self.latest_pos = None
             self.index_tip = None
             return None
 
         # 엄지(1~4)와 검지(5~8) 랜드마크 평균
-        landmarks = result.hand_landmarks[0]
+        landmarks = self._select_tracking_hand(result.hand_landmarks, w, h)
         THUMB_IDX = [4]
         INDEX_IDX = [8]
         selected = [landmarks[i] for i in THUMB_IDX + INDEX_IDX]
@@ -60,8 +61,28 @@ class HandTracker:
         self.history.append((raw_x, raw_y))
         smooth_x = int(np.mean([p[0] for p in self.history]))
         smooth_y = int(np.mean([p[1] for p in self.history]))
+        self.latest_pos = (smooth_x, smooth_y)
 
         return (smooth_x, smooth_y)
+
+    def _select_tracking_hand(self, hand_landmarks, w, h):
+        if self.latest_pos is None or len(hand_landmarks) == 1:
+            return hand_landmarks[0]
+
+        def pinch_center(landmarks):
+            thumb = landmarks[4]
+            index = landmarks[8]
+            return (
+                int(((thumb.x + index.x) / 2) * w),
+                int(((thumb.y + index.y) / 2) * h),
+            )
+
+        lx, ly = self.latest_pos
+        return min(
+            hand_landmarks,
+            key=lambda landmarks: (pinch_center(landmarks)[0] - lx) ** 2
+            + (pinch_center(landmarks)[1] - ly) ** 2,
+        )
 
 
 if __name__ == "__main__":

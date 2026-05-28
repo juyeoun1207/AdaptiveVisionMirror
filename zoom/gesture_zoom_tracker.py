@@ -146,7 +146,12 @@ class GestureZoomTracker:
 
         landmarks = self._pick_landmarks(result.multi_hand_landmarks, w, h, ignore_point)
         if landmarks is None:
-            return None
+            return {
+                "index_tip": None,
+                "pinch_distance": 0.0,
+                "zoom_delta": 0.0,
+                "zoom_mode": self._mode,
+            }
 
         thumb_tip = (
             int(landmarks[THUMB_TIP].x * w),

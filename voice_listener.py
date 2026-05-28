@@ -6,7 +6,7 @@ COMMAND_MAP = {
         "showmyeyes", "focusoneyes", "trackeyes", "showeyes", "magnifyeyes"
     ],
     "MODE_NOSE": [
-        "코확대", "코보여줘", "노즈모드", "nosemode", "zoomnose", 
+        "소확대", "코확대", "코보여줘", "노즈모드", "nosemode", "zoomnose", 
         "showmynose", "focusonnose", "tracknose", "shownose", "magnifynose"
     ],
     "MODE_MOUTH": [
