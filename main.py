@@ -1,3 +1,4 @@
+import mediapipe_compat  # mp.solutions 호환성 패치 — 반드시 최상단 유지
 import sys
 import threading
 import queue
@@ -5,7 +6,6 @@ import time
 import cv2
 
 from tracker.hand_tracker import HandTracker
-from tracker.gaze_controller import GazeController
 from zoom.gesture_zoom_tracker import GestureZoomTracker
 from tracker.face_region_tracker import FaceRegionTracker
 
@@ -52,7 +52,6 @@ def run_vision_thread(window):
     print("[Vision Thread] 📷 사각지대 관찰용 하이브리드 엔진 가동!")
     
     hand_tracker = HandTracker()
-    gaze_tracker = GazeController(screen_width=1280, screen_height=720) # (더 이상 좌표계산엔 안 씀)
     face_tracker = FaceRegionTracker()
     gesture_tracker = GestureZoomTracker()
     
@@ -124,16 +123,18 @@ def run_vision_thread(window):
                     
                 window.update_subtitle(subtitle)
 
-            # [B] 일반 시선 추적 모드 (헤드 트래킹 대체 모드)
+            # [B] 고개(코) 트래킹 모드 — 눈동자 대신 코 위치로 박스 이동
             elif current_mode == MODE_GAZE:
-                shared_state["use_face"] = False 
+                shared_state["use_face"] = False
 
-                gaze_pos, _, _ = gaze_tracker.get_gaze_position(frame)
-                if gaze_pos:
-                    shared_state["track_x"] = gaze_pos[0] / gaze_tracker.screen_width
-                    shared_state["track_y"] = gaze_pos[1] / gaze_tracker.screen_height
+                if bbox_nose:
+                    _GAZE_AMP = 3.0  # 중앙 기준 이동 증폭 배율 (크게 = 조금 움직여도 박스 멀리)
+                    raw_x = ((bbox_nose[0] + bbox_nose[2]) / 2) / w
+                    raw_y = ((bbox_nose[1] + bbox_nose[3]) / 2) / h
+                    shared_state["track_x"] = max(0.0, min(1.0, 0.5 + (raw_x - 0.5) * _GAZE_AMP))
+                    shared_state["track_y"] = max(0.0, min(1.0, 0.5 + (raw_y - 0.5) * _GAZE_AMP))
 
-                window.update_subtitle("👁️ Gaze Tracking + Hand Position")
+                window.update_subtitle("Head Tracking + Hand Position")
 
             # [C] 손 추적 모드
             elif current_mode == MODE_HAND:

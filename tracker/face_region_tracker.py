@@ -1,9 +1,12 @@
 import cv2
 import mediapipe as mp
 import numpy as np
+import os
+import time
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision as mp_vision
 
-
-mp_face_mesh = mp.solutions.face_mesh
+_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'face_landmarker.task')
 
 ZOOM_MIN = 1.0
 ZOOM_MAX = 5.0
@@ -92,12 +95,17 @@ def overlay_panel(display, panel, center, border_color=(255, 220, 0)):
 
 class FaceRegionTracker:
     def __init__(self):
-        self.face_mesh = mp_face_mesh.FaceMesh(
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.5,
+        with open(_MODEL_PATH, 'rb') as f:
+            model_data = f.read()
+        base_options = mp_python.BaseOptions(model_asset_buffer=model_data)
+        options = mp_vision.FaceLandmarkerOptions(
+            base_options=base_options,
+            num_faces=1,
+            min_face_detection_confidence=0.5,
             min_tracking_confidence=0.5,
+            running_mode=mp_vision.RunningMode.VIDEO,
         )
+        self.detector = mp_vision.FaceLandmarker.create_from_options(options)
 
     def get_region_crop(self, frame, region_key):
         if region_key not in REGIONS:
@@ -105,15 +113,17 @@ class FaceRegionTracker:
 
         h, w = frame.shape[:2]
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = self.face_mesh.process(rgb)
-        if not results.multi_face_landmarks:
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        timestamp_ms = int(time.time() * 1000)
+        result = self.detector.detect_for_video(mp_image, timestamp_ms)
+        if not result.face_landmarks:
             return None, None
 
-        landmarks = results.multi_face_landmarks[0].landmark
+        landmarks = result.face_landmarks[0]
         region = REGIONS[region_key]
         bbox = _get_bbox(landmarks, region["indices"], h, w, region["padding"])
         x1, y1, x2, y2 = bbox
         return bbox, frame[y1:y2, x1:x2].copy()
 
     def release(self):
-        self.face_mesh.close()
+        self.detector.close()

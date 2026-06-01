@@ -1,7 +1,13 @@
 import math
+import os
+import time
 
 import cv2
 import mediapipe as mp
+from mediapipe.tasks import python as mp_python
+from mediapipe.tasks.python import vision as mp_vision
+
+_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'tracker', 'hand_landmarker.task')
 
 
 THUMB_TIP = 4
@@ -31,12 +37,17 @@ class GestureZoomTracker:
     # Track thumb/index pinch strokes and return an incremental zoom delta.
 
     def __init__(self, max_hands: int = 2, detection_confidence: float = 0.7):
-        self.mp_hands = mp.solutions.hands
-        self.hands = self.mp_hands.Hands(
-            max_num_hands=max_hands,
-            min_detection_confidence=detection_confidence,
+        with open(_MODEL_PATH, 'rb') as f:
+            model_data = f.read()
+        base_options = mp_python.BaseOptions(model_asset_buffer=model_data)
+        options = mp_vision.HandLandmarkerOptions(
+            base_options=base_options,
+            num_hands=max_hands,
+            min_hand_detection_confidence=detection_confidence,
             min_tracking_confidence=0.6,
+            running_mode=mp_vision.RunningMode.VIDEO,
         )
+        self.detector = mp_vision.HandLandmarker.create_from_options(options)
         self._prev_distance: float | None = None
         self._mode = MODE_IDLE
 
@@ -102,14 +113,14 @@ class GestureZoomTracker:
 
     def _pick_landmarks(self, hand_landmarks, w, h, ignore_point=None, ignore_radius_px=120):
         if ignore_point is None:
-            return hand_landmarks[0].landmark
+            return hand_landmarks[0]
 
         ix, iy = ignore_point
         fallback = None
         fallback_dist = -1
 
         for hand in hand_landmarks:
-            landmarks = hand.landmark
+            landmarks = hand
             thumb_tip = (
                 int(landmarks[THUMB_TIP].x * w),
                 int(landmarks[THUMB_TIP].y * h),
@@ -138,13 +149,15 @@ class GestureZoomTracker:
     def process_frame(self, frame_bgr, ignore_point=None) -> dict | None:
         h, w = frame_bgr.shape[:2]
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        result = self.hands.process(rgb)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
+        timestamp_ms = int(time.time() * 1000)
+        result = self.detector.detect_for_video(mp_image, timestamp_ms)
 
-        if not result.multi_hand_landmarks:
+        if not result.hand_landmarks:
             self._reset_stroke()
             return None
 
-        landmarks = self._pick_landmarks(result.multi_hand_landmarks, w, h, ignore_point)
+        landmarks = self._pick_landmarks(result.hand_landmarks, w, h, ignore_point)
         if landmarks is None:
             return {
                 "index_tip": None,
@@ -173,7 +186,7 @@ class GestureZoomTracker:
         }
 
     def release(self):
-        self.hands.close()
+        self.detector.close()
 
 
 if __name__ == "__main__":
